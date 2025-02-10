@@ -1,0 +1,77 @@
+FUNCTION AuthenticateUser(username, password)
+    user = GetUserFromDatabase(username)
+    
+    IF user IS NULL THEN
+        RETURN "Invalid Credentials"
+    
+    IF user.FailedAttempts >= MAX_FAILED_ATTEMPTS THEN
+        IF CurrentTime - user.LastFailedAttempt < LOCKOUT_DURATION THEN
+            RETURN "Account Locked. Try again later."
+        ELSE
+            ResetFailedAttempts(user)
+    
+    IF VerifyPassword(user, password) IS FALSE THEN
+        IncrementFailedAttempts(user)
+        RETURN "Invalid Credentials"
+
+    GenerateSession(user)
+    RETURN RequireMFA(user)
+
+FUNCTION RequireMFA(user)
+    IF UserHasFingerprintEnabled(user) THEN
+        RETURN PromptBiometricAuth(user)
+    ELSE
+        RETURN PromptAuthenticatorOTP(user)
+
+FUNCTION PromptBiometricAuth(user)
+    fingerprintScan = GetFingerprintInput()
+    
+    IF VerifyFingerprint(user, fingerprintScan) IS TRUE THEN
+        RETURN SetSecureSession(user)
+    ELSE
+        IncrementFailedBiometricAttempts(user)
+        
+        IF user.FailedBiometricAttempts >= MAX_BIOMETRIC_ATTEMPTS THEN
+            RETURN "Too many failed biometric attempts. Try again later."
+        
+        RETURN "Fingerprint Authentication Failed"
+
+FUNCTION PromptAuthenticatorOTP(user)
+    secretKey = GetOrGenerateSecretKey(user)
+    otp = GenerateTOTP(secretKey)
+    
+    SendOTPToUser(user, otp)   // Authenticator App generates OTP
+    RETURN "Enter your OTP"
+
+FUNCTION VerifyMFA(user, otpInput)
+    secretKey = GetSecretKey(user)
+
+    IF user.FailedOTPAttempts >= MAX_OTP_ATTEMPTS THEN
+        IF CurrentTime - user.LastFailedOTPAttempt < LOCKOUT_DURATION THEN
+            RETURN "Too many failed OTP attempts. Try again later."
+        ELSE
+            ResetFailedOTPAttempts(user)
+
+    validOTP = GenerateTOTP(secretKey)
+
+    IF otpInput != validOTP THEN
+        IncrementFailedOTPAttempts(user)
+        RETURN "Invalid OTP"
+
+    RETURN SetSecureSession(user)
+
+FUNCTION GenerateTOTP(secretKey)
+    currentTimeSlice = Floor(CurrentTime / TIME_WINDOW)
+    otp = HMAC_SHA1(secretKey, currentTimeSlice)
+    otp = TruncateToDigits(otp, 6)
+    RETURN otp
+
+FUNCTION SetSecureSession(user)
+    sessionToken = GenerateJWT(user)
+    SetHttpOnlySecureCookie("SessionToken", sessionToken, ExpiryTime=SESSION_DURATION)
+    RETURN "Authentication Successful"
+
+FUNCTION GenerateJWT(user)
+    payload = { "userId": user.ID, "exp": CurrentTime + TOKEN_EXPIRY }
+    jwt = SignJWT(payload, SECRET_KEY)
+    RETURN jwt
